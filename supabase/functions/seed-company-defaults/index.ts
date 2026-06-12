@@ -158,8 +158,8 @@ async function seedTable(
   table: string,
   rows: Array<{ id: string }>,
   companyId: string,
-): Promise<{ ok: boolean; inserted: number; error?: string }> {
-  if (rows.length === 0) return { ok: true, inserted: 0 };
+): Promise<{ ok: boolean; inserted: number; skipped: number; error?: string }> {
+  if (rows.length === 0) return { ok: true, inserted: 0, skipped: 0 };
   try {
     // Convert seed ids (e.g. "sh-morning") → deterministic UUID v5
     // so the `id uuid` column accepts them.
@@ -167,37 +167,50 @@ async function seedTable(
       rows.map(async (r) => ({ ...r, id: await seedIdToUuid(r.id) })),
     );
 
-    const selRes = await fetch(
-      `${supabaseUrl}/rest/v1/${table}?company_id=eq.${companyId}&select=id`,
-      { headers: { Authorization: `Bearer ${serviceKey}`, apikey: serviceKey } },
-    );
-    if (!selRes.ok) {
-      return { ok: false, inserted: 0, error: `select ${selRes.status}` };
+    // Try SELECT first to know which rows are new (informational +
+    // lets us report inserted vs skipped). If SELECT fails (e.g.
+    // RLS on the service_role path), we fall through to the upsert.
+    let existingIds = new Set<string>();
+    try {
+      const selRes = await fetch(
+        `${supabaseUrl}/rest/v1/${table}?company_id=eq.${companyId}&select=id`,
+        { headers: { Authorization: `Bearer ${serviceKey}`, apikey: serviceKey } },
+      );
+      if (selRes.ok) {
+        const existing = (await selRes.json()) as Array<{ id: string }>;
+        existingIds = new Set(existing.map((r) => r.id));
+      }
+    } catch {
+      // ignore — we'll just attempt the upsert
     }
-    const existing = (await selRes.json()) as Array<{ id: string }>;
-    const existingIds = new Set(existing.map((r) => r.id));
+
     const missing = converted
       .filter((r) => !existingIds.has(r.id))
       .map((r) => ({ ...r, company_id: companyId, created_at: NOW, updated_at: NOW }));
-    if (missing.length === 0) return { ok: true, inserted: 0 };
+    const skipped = converted.length - missing.length;
+    if (missing.length === 0) return { ok: true, inserted: 0, skipped };
 
-    const insRes = await fetch(`${supabaseUrl}/rest/v1/${table}`, {
+    // Use upsert (PostgREST on_conflict=id) so a re-run is safe even
+    // if SELECT previously failed or is delayed. `on_conflict=id` tells
+    // PostgREST to ignore rows whose id already exists (the id column
+    // is the table's primary key, so the unique constraint is implicit).
+    const insRes = await fetch(`${supabaseUrl}/rest/v1/${table}?on_conflict=id`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${serviceKey}`,
         apikey: serviceKey,
         'Content-Type': 'application/json',
-        Prefer: 'return=minimal',
+        Prefer: 'return=minimal,resolution=ignore-duplicates',
       },
       body: JSON.stringify(missing),
     });
     if (!insRes.ok) {
       const txt = await insRes.text();
-      return { ok: false, inserted: 0, error: `${insRes.status} ${txt}` };
+      return { ok: false, inserted: 0, skipped, error: `${insRes.status} ${txt}` };
     }
-    return { ok: true, inserted: missing.length };
+    return { ok: true, inserted: missing.length, skipped };
   } catch (e) {
-    return { ok: false, inserted: 0, error: e instanceof Error ? e.message : String(e) };
+    return { ok: false, inserted: 0, skipped: 0, error: e instanceof Error ? e.message : String(e) };
   }
 }
 
