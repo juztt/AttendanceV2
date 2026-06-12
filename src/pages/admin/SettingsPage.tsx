@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { PageHeader } from '@/components/shared/PageHeader';
@@ -8,15 +8,111 @@ import { loadStore, setSetting } from '@/lib/store';
 import { getSetting } from '@/lib/utils';
 import { thaiDateShort, formatCurrency } from '@/lib/utils';
 import { Plus, Edit, Trash2, Save, Settings as SettingsIcon, Clock4, Wallet, CalendarOff, MapPin, FileText, Save as SaveIcon } from 'lucide-react';
+import { isSupabaseConfigured } from '@/lib/supabase/client';
+import { syncAllFromSupabase } from '@/lib/repos/employees';
 import type { Shift, PayRule, Holiday, Location, LeaveType, EmploymentType } from '@/types';
 
 type TabKey = 'general' | 'shifts' | 'payrules' | 'holidays' | 'locations' | 'leavetypes';
+
+// --- Default-state factories for Settings forms ---------------------------
+//
+// These mirror the prior useState initializer, but live as plain
+// functions so a useEffect can re-run them whenever the modal opens
+// for a different (or new) row. Without this, useState's lazy init
+// runs exactly once — opening Edit on row A, closing, then opening
+// Edit on row B would still show row A's values.
+
+function buildShiftFormState(editing: Shift | null, companyId: string): Partial<Shift> {
+  return editing ?? {
+    name: '',
+    start_time: '08:00',
+    end_time: '18:00',
+    break_minutes: 60,
+    standard_hours: 9,
+    grace_minutes: 15,
+    ot_enabled: true,
+    color: '#A7F3D0',
+    is_active: true,
+    company_id: companyId,
+  };
+}
+
+function buildPayRuleFormState(editing: PayRule | null, companyId: string): Partial<PayRule> {
+  return editing ?? {
+    name: '',
+    employment_type: 'fulltime_passed',
+    standard_hours_per_day: 8,
+    daily_rate: 400,
+    hourly_rate: 37,
+    ot_rate: 40,
+    holiday_multiplier: 2,
+    personal_day_off_paid: false,
+    personal_day_off_pay: 0,
+    sick_paid: true,
+    sick_pay_per_day: 350,
+    personal_leave_paid: false,
+    personal_leave_pay_per_day: 0,
+    vacation_paid: false,
+    vacation_pay_per_day: 0,
+    is_active: true,
+    company_id: companyId,
+  };
+}
+
+function buildHolidayFormState(editing: Holiday | null, companyId: string): Partial<Holiday> {
+  return editing ?? {
+    name: '',
+    holiday_date: new Date().toISOString().slice(0, 10),
+    multiplier: 2,
+    is_recurring: true,
+    company_id: companyId,
+  };
+}
+
+function buildLocationFormState(editing: Location | null, companyId: string): Partial<Location> {
+  return editing ?? {
+    name: '',
+    latitude: 13.7563,
+    longitude: 100.5018,
+    radius_meters: 200,
+    is_active: true,
+    company_id: companyId,
+  };
+}
+
+function buildLeaveTypeFormState(editing: LeaveType | null, companyId: string): Partial<LeaveType> {
+  return editing ?? {
+    name: '',
+    category: 'personal',
+    paid: true,
+    requires_certificate: false,
+    max_days_per_year: 6,
+    is_active: true,
+    company_id: companyId,
+  };
+}
 
 export default function AdminSettingsPage() {
   const { session } = useAuth();
   const toast = useToast();
   const [, setRefresh] = useState(0);
   const [tab, setTab] = useState<TabKey>('general');
+
+  // When Supabase is configured, pull all per-company reference data
+  // (shifts / pay rules / holidays / locations / leave types) on mount
+  // so the Settings tabs are populated for a brand-new browser session.
+  useEffect(() => {
+    if (!session) return;
+    if (!isSupabaseConfigured) return;
+    let cancelled = false;
+    (async () => {
+      await syncAllFromSupabase(session.companyId);
+      if (!cancelled) setRefresh((n) => n + 1);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.companyId]);
 
   return (
     <div>
@@ -131,7 +227,11 @@ function ShiftsTab({ companyId, onChange }: { companyId: string; onChange: () =>
 }
 
 function ShiftForm({ open, onClose, editing, companyId, onSaved }: { open: boolean; onClose: () => void; editing: Shift | null; companyId: string; onSaved: () => void }) {
-  const [form, setForm] = useState<Partial<Shift>>(() => editing ?? { name: '', start_time: '08:00', end_time: '18:00', break_minutes: 60, standard_hours: 9, grace_minutes: 15, ot_enabled: true, color: '#A7F3D0', is_active: true, company_id: companyId });
+  const [form, setForm] = useState<Partial<Shift>>(() => buildShiftFormState(editing, companyId));
+  // Re-init form when modal opens for a different (or new) row
+  useEffect(() => {
+    if (open) setForm(buildShiftFormState(editing, companyId));
+  }, [open, editing?.id, companyId]);
 
   if (!open) return null;
   const save = () => {
@@ -222,11 +322,11 @@ function PayRulesTab({ companyId, onChange }: { companyId: string; onChange: () 
 }
 
 function PayRuleForm({ open, onClose, editing, companyId, onSaved }: { open: boolean; onClose: () => void; editing: PayRule | null; companyId: string; onSaved: () => void }) {
-  const [form, setForm] = useState<Partial<PayRule>>(() => editing ?? {
-    name: '', employment_type: 'fulltime_passed', standard_hours_per_day: 8, daily_rate: 400, hourly_rate: 37, ot_rate: 40, holiday_multiplier: 2,
-    personal_day_off_paid: false, personal_day_off_pay: 0, sick_paid: true, sick_pay_per_day: 350,
-    personal_leave_paid: false, personal_leave_pay_per_day: 0, vacation_paid: false, vacation_pay_per_day: 0, is_active: true, company_id: companyId,
-  });
+  const [form, setForm] = useState<Partial<PayRule>>(() => buildPayRuleFormState(editing, companyId));
+  // Re-init form when modal opens for a different (or new) row
+  useEffect(() => {
+    if (open) setForm(buildPayRuleFormState(editing, companyId));
+  }, [open, editing?.id, companyId]);
 
   if (!open) return null;
   const save = () => {
@@ -343,8 +443,11 @@ function HolidaysTab({ companyId, onChange }: { companyId: string; onChange: () 
 }
 
 function HolidayForm({ open, onClose, editing, companyId, onSaved }: { open: boolean; onClose: () => void; editing: Holiday | null; companyId: string; onSaved: () => void }) {
-  const [form, setForm] = useState<Partial<Holiday>>(() => editing ?? { name: '', holiday_date: new Date().toISOString().slice(0, 10), multiplier: 2, is_recurring: true, company_id: companyId });
-  if (!open) return null;
+  const [form, setForm] = useState<Partial<Holiday>>(() => buildHolidayFormState(editing, companyId));
+  // Re-init form when modal opens for a different (or new) row
+  useEffect(() => {
+    if (open) setForm(buildHolidayFormState(editing, companyId));
+  }, [open, editing?.id, companyId]);
   const save = () => {
     if (!form.name || !form.holiday_date) { alert('กรอกข้อมูลให้ครบ'); return; }
     const h: Holiday = {
@@ -406,7 +509,11 @@ function LocationsTab({ companyId, onChange }: { companyId: string; onChange: ()
 }
 
 function LocationForm({ open, onClose, editing, companyId, onSaved }: { open: boolean; onClose: () => void; editing: Location | null; companyId: string; onSaved: () => void }) {
-  const [form, setForm] = useState<Partial<Location>>(() => editing ?? { name: '', latitude: 13.7563, longitude: 100.5018, radius_meters: 200, is_active: true, company_id: companyId });
+  const [form, setForm] = useState<Partial<Location>>(() => buildLocationFormState(editing, companyId));
+  // Re-init form when modal opens for a different (or new) row
+  useEffect(() => {
+    if (open) setForm(buildLocationFormState(editing, companyId));
+  }, [open, editing?.id, companyId]);
   if (!open) return null;
   const useMyLocation = () => {
     if (!navigator.geolocation) return;
@@ -483,7 +590,11 @@ function LeaveTypesTab({ companyId, onChange }: { companyId: string; onChange: (
 }
 
 function LeaveTypeForm({ open, onClose, editing, companyId, onSaved }: { open: boolean; onClose: () => void; editing: LeaveType | null; companyId: string; onSaved: () => void }) {
-  const [form, setForm] = useState<Partial<LeaveType>>(() => editing ?? { name: '', category: 'personal', paid: true, requires_certificate: false, max_days_per_year: 6, is_active: true, company_id: companyId });
+  const [form, setForm] = useState<Partial<LeaveType>>(() => buildLeaveTypeFormState(editing, companyId));
+  // Re-init form when modal opens for a different (or new) row
+  useEffect(() => {
+    if (open) setForm(buildLeaveTypeFormState(editing, companyId));
+  }, [open, editing?.id, companyId]);
   if (!open) return null;
   const save = () => {
     if (!form.name) { alert('กรอกชื่อประเภท'); return; }

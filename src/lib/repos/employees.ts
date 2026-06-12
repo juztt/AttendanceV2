@@ -57,6 +57,104 @@ export async function syncEmployeesFromSupabase(companyId: string): Promise<void
   saveStore(store);
 }
 
+/**
+ * Sync the per-company data that admin pages render via localStorage:
+ *   - profiles
+ *   - shifts
+ *   - pay_rules
+ *   - holidays
+ *   - locations
+ *   - leave_types
+ *   - app_settings
+ *   - branches
+ *   - employees (joined with profile_id)
+ *
+ * One call covers all admin-side pages (Employees, Settings, etc.) so
+ * a single useEffect on mount pulls the whole working set in parallel.
+ *
+ * Each table is fetched in its own try/catch — a single failure (e.g.
+ * missing RLS policy) does not block the others.
+ */
+export async function syncAllFromSupabase(companyId: string): Promise<void> {
+  if (!isSupabaseConfigured) return;
+  const supabase = getSupabase();
+  if (!supabase) return;
+
+  type TableName =
+    | 'profiles'
+    | 'shifts'
+    | 'pay_rules'
+    | 'holidays'
+    | 'locations'
+    | 'leave_types'
+    | 'app_settings'
+    | 'branches';
+
+  const tables: TableName[] = [
+    'profiles',
+    'shifts',
+    'pay_rules',
+    'holidays',
+    'locations',
+    'leave_types',
+    'app_settings',
+    'branches',
+  ];
+
+  const store = loadStore();
+  // Map table -> local store key (typed loosely to avoid a circular import)
+  const storeKey: Record<TableName, string> = {
+    profiles: 'profiles',
+    shifts: 'shifts',
+    pay_rules: 'payRules',
+    holidays: 'holidays',
+    locations: 'locations',
+    leave_types: 'leaveTypes',
+    app_settings: 'appSettings',
+    branches: 'branches',
+  };
+
+  // Reference tables + profiles are independent → fetch in parallel.
+  await Promise.all(
+    tables.map(async (t) => {
+      try {
+        const { data, error } = await supabase.from(t).select('*').eq('company_id', companyId);
+        if (error) {
+          console.error(`syncAllFromSupabase: ${t} failed`, error.message);
+          return;
+        }
+        if (!data) return;
+        const key = storeKey[t] as keyof typeof store;
+        // Replace this company's slice; keep rows from other companies
+        const merged = (store as any)[key].filter((row: any) => row.company_id !== companyId);
+        for (const row of data) merged.push(row);
+        (store as any)[key] = merged;
+      } catch (e) {
+        console.error(`syncAllFromSupabase: ${t} crashed`, e);
+      }
+    }),
+  );
+
+  // Employees pull separately because the linked profiles need to be
+  // merged from the profiles set we just fetched.
+  try {
+    const { data, error } = await supabase
+      .from('employees')
+      .select('*')
+      .eq('company_id', companyId);
+    if (error) {
+      console.error('syncAllFromSupabase: employees failed', error.message);
+    } else if (data) {
+      store.employees = store.employees.filter((e) => e.company_id !== companyId);
+      for (const row of data) store.employees.push(row as Employee);
+    }
+  } catch (e) {
+    console.error('syncAllFromSupabase: employees crashed', e);
+  }
+
+  saveStore(store);
+}
+
 export function getActiveEmployees(companyId: string): Employee[] {
   return getEmployees(companyId).filter((e) => e.status === 'active');
 }

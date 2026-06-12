@@ -183,11 +183,14 @@ function labelType(t: EmploymentType) {
   return t === 'fulltime_passed' ? 'ประจำผ่านโปร' : t === 'fulltime_not_passed' ? 'ประจำยังไม่ผ่านโปร' : 'พาร์ทไทม์';
 }
 
-function EmployeeFormModal({ open, onClose, editing, onSaved, companyId, actorId }: { open: boolean; onClose: () => void; editing: Employee | null; onSaved: () => void; companyId: string; actorId: string }) {
-  const toast = useToast();
-  const shifts = companyId ? getShifts(companyId) : [];
-  const payRules = companyId ? getPayRules(companyId) : [];
-  const [form, setForm] = useState({
+/**
+ * Build a fresh form-state object from the editing target (or defaults).
+ * Extracted so we can call it both on initial mount AND whenever
+ * `editing` changes — useState's lazy initializer only runs once,
+ * which is the root cause of "edit form shows empty fields" bugs.
+ */
+function buildEmployeeFormState(editing: Employee | null) {
+  return {
     full_name: editing?.full_name ?? '',
     nickname: editing?.nickname ?? '',
     phone: editing?.phone ?? '',
@@ -199,8 +202,23 @@ function EmployeeFormModal({ open, onClose, editing, onSaved, companyId, actorId
     start_date: editing?.start_date ?? new Date().toISOString().slice(0, 10),
     createLogin: !editing,
     password: 'demo1234',
-  });
+  };
+}
+
+function EmployeeFormModal({ open, onClose, editing, onSaved, companyId, actorId }: { open: boolean; onClose: () => void; editing: Employee | null; onSaved: () => void; companyId: string; actorId: string }) {
+  const toast = useToast();
+  const shifts = companyId ? getShifts(companyId) : [];
+  const payRules = companyId ? getPayRules(companyId) : [];
+  const [form, setForm] = useState(() => buildEmployeeFormState(editing));
   const [saving, setSaving] = useState(false);
+
+  // Re-initialize form whenever we open the modal for a different row
+  // (or close+reopen as "new"). Without this, useState's lazy init
+  // keeps the first-ever state and switching between two employees
+  // shows the old row's data.
+  useEffect(() => {
+    if (open) setForm(buildEmployeeFormState(editing));
+  }, [open, editing?.id]);
 
   const handleSave = async () => {
     if (!form.full_name.trim()) { toast.error('กรุณากรอกชื่อ-นามสกุล'); return; }
