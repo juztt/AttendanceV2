@@ -98,7 +98,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // local store in sync so the UI renders the new rows even
         // before the next syncAllFromSupabase pass.
         if (profile.role === 'owner' || profile.role === 'admin') {
-          const { seedCompanyDefaultsLocal } = await import('@/lib/seeds');
+          const [{ seedCompanyDefaultsLocal }, { syncAllFromSupabase }] = await Promise.all([
+            import('@/lib/seeds'),
+            import('@/lib/repos/employees'),
+          ]);
           seedCompanyDefaultsLocal(profile.company_id);
           try {
             const { data, error } = await supabase.functions.invoke<{
@@ -110,6 +113,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             } else {
               console.log('[seed-company-defaults]', data?.summary);
             }
+            // Re-sync from Supabase so the freshly inserted rows
+            // (or rows that were already there from a prior seed
+            // run) show up in every admin page immediately.
+            await syncAllFromSupabase(profile.company_id);
+            console.log('[seed] syncAllFromSupabase done');
           } catch (e) {
             console.warn('[seed-company-defaults] crashed', e);
           }
