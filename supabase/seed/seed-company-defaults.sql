@@ -23,23 +23,24 @@
 do $$
 declare
   v_company_id uuid;
-  v_caller_id  uuid := auth.uid();
+  v_caller_id  uuid;
   v_now        timestamptz := now();
 begin
-  if v_caller_id is null then
-    raise exception 'No authenticated user. Open Supabase SQL Editor as the project owner, OR run as service_role.';
-  end if;
-
-  select company_id, is_active
-    into v_company_id
+  -- SQL Editor runs as the project owner (service_role). Use the
+  -- first profile's company_id as the target. If there are multiple
+  -- companies, edit v_company_id manually before running.
+  select id, company_id
+    into v_caller_id, v_company_id
   from public.profiles
-  where id = v_caller_id;
+  where is_active = true
+  order by created_at
+  limit 1;
 
   if v_company_id is null then
-    raise exception 'Caller has no profile / no company_id. Create the profile first.';
+    raise exception 'No active profile found. Create a company + profile first (run supabase/migrations/0001_init.sql + the README 3.4 SQL).';
   end if;
 
-  raise notice 'Seeding defaults for company %', v_company_id;
+  raise notice 'Seeding defaults for company % (via profile %)', v_company_id, v_caller_id;
 
   ----------------------------------------------------------------------------
   -- Shifts
