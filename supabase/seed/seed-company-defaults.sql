@@ -11,36 +11,19 @@
 --   * 56 public holidays for 2025 / 2026 / 2027
 --     (source: https://calendar.kapook.com/2569/holiday)
 --
--- How it works:
---   1. Find the caller's company_id from their profile (so you don't have to
---      edit this file per company).
---   2. Upsert into each table using ON CONFLICT (id) DO NOTHING.
---   3. The fixed UUIDs below are stable across runs and environments, so
---      the same seed row always keeps the same id (e.g. the morning shift
---      is always 'a1b2c3d4-...' regardless of which company runs this).
+-- This version uses a hard-coded company_id so it works without an
+-- authenticated session. The default value matches the company_id
+-- used in the README 3.4 SQL ('บริษัทของฉัน'). If your company has
+-- a different id, edit v_company_id below before running.
 -- =============================================================================
 
 do $$
 declare
-  v_company_id uuid;
-  v_caller_id  uuid;
+  -- >>> EDIT THIS if your company_id is different <<<
+  v_company_id uuid := '00000000-0000-0000-0000-000000000001';
   v_now        timestamptz := now();
 begin
-  -- SQL Editor runs as the project owner (service_role). Use the
-  -- first profile's company_id as the target. If there are multiple
-  -- companies, edit v_company_id manually before running.
-  select id, company_id
-    into v_caller_id, v_company_id
-  from public.profiles
-  where is_active = true
-  order by created_at
-  limit 1;
-
-  if v_company_id is null then
-    raise exception 'No active profile found. Create a company + profile first (run supabase/migrations/0001_init.sql + the README 3.4 SQL).';
-  end if;
-
-  raise notice 'Seeding defaults for company % (via profile %)', v_company_id, v_caller_id;
+  raise notice 'Seeding defaults for company %', v_company_id;
 
   ----------------------------------------------------------------------------
   -- Shifts
