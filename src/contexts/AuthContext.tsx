@@ -87,6 +87,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .maybeSingle();
         const employee: Employee | null = (employeeRow as Employee) ?? null;
 
+        // First-time owner/admin login → seed Thai defaults into the
+        // company (shifts, pay rules, leave types, holidays, location).
+        // Idempotent: rows already present for the company are skipped,
+        // so this is a no-op on every subsequent login.
+        if (profile.role === 'owner' || profile.role === 'admin') {
+          const { seedCompanyDefaultsRemote } = await import('@/lib/seeds');
+          try {
+            await seedCompanyDefaultsRemote(profile.company_id);
+          } catch (e) {
+            console.warn('seedCompanyDefaultsRemote failed', e);
+          }
+        }
+
         const newSession: Session = {
           userId: profile.id,
           companyId: profile.company_id,

@@ -433,6 +433,17 @@ function seedStore(s: Store) {
       // already saved
     }
   }
+
+  // Augment with the curated Thai templates (full holiday calendar,
+  // canonical shifts, three pay rules, leave types, main office
+  // location). Idempotent: any template row whose id is already
+  // present for the company is skipped.
+  // The companyId above ('co_default') is what every prior demo row
+  // was created under, so the templates attach to the same scope.
+  // Lazy import to keep store.ts free of cross-module cycles.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { seedCompanyDefaultsLocal } = require('@/lib/seeds') as typeof import('@/lib/seeds');
+  seedCompanyDefaultsLocal(companyId);
 }
 
 // ---------- Session ----------
