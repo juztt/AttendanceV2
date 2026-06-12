@@ -2,6 +2,7 @@ import { loadStore, saveStore, logAudit } from '@/lib/store';
 import { uid, now, pickAvatarColor } from '@/lib/utils';
 import type { Employee, EmploymentType } from '@/types';
 import { setDemoUser } from '@/lib/store';
+import { isSupabaseConfigured, getSupabase } from '@/lib/supabase/client';
 
 export function getEmployees(companyId: string): Employee[] {
   return loadStore().employees.filter((e) => e.company_id === companyId);
@@ -110,4 +111,84 @@ export function resetEmployeePassword(empId: string, newPassword: string): void 
   const emp = store.employees.find((e) => e.id === empId);
   if (!emp || !emp.profile_id) throw new Error('พนักงานนี้ยังไม่มีบัญชีเข้าใช้งาน');
   setDemoUser(emp.profile_id, newPassword, emp.id);
+}
+
+/**
+ * Create an employee with a real Supabase Auth login — owner-only.
+ *
+ * Calls the Supabase Edge Function `create-employee` which uses the
+ * service_role key to:
+ *   1. auth.admin.createUser(email, password)
+ *   2. insert into public.profiles (role = 'employee')
+ *   3. insert into public.employees linked by profile_id
+ *
+ * Throws if Supabase is not configured, the caller's session is
+ * missing, or the Edge Function reports an error.
+ */
+export interface CreateEmployeeWithLoginInput {
+  full_name: string;
+  email: string;
+  password: string;
+  nickname?: string;
+  phone?: string;
+  position?: string;
+  employment_type: EmploymentType;
+  pay_rule_id?: string;
+  default_shift_id?: string;
+  start_date: string;
+  role?: 'employee' | 'admin';
+}
+
+export interface CreateEmployeeWithLoginResult {
+  employee: Employee;
+  login: { email: string; password: string };
+}
+
+export async function createEmployeeWithLogin(
+  input: CreateEmployeeWithLoginInput,
+): Promise<CreateEmployeeWithLoginResult> {
+  if (!isSupabaseConfigured) {
+    throw new Error('โหมดนี้ใช้ได้เฉพาะตอนต่อ Supabase เท่านั้น');
+  }
+  const supabase = getSupabase();
+  if (!supabase) throw new Error('Supabase client ไม่พร้อมใช้งาน');
+
+  const { data, error } = await supabase.functions.invoke<{
+    ok: boolean;
+    employee: Employee;
+    login: { email: string; password: string };
+  }>('create-employee', { body: input });
+
+  if (error) {
+    // FunctionsHttpError carries the body — try to extract a friendly message
+    const msg = (error as any)?.context?.body?.error ?? error.message;
+    throw new Error(msg || 'เรียก Edge Function ไม่สำเร็จ');
+  }
+  if (!data?.ok || !data?.employee) {
+    throw new Error('Edge Function ตอบกลับไม่ถูกต้อง');
+  }
+  return { employee: data.employee, login: data.login };
+}
+
+/**
+ * Reset password for an employee that has a real Supabase Auth login.
+ * Requires the Edge Function `reset-employee-password` to be deployed
+ * (it shares the same owner-check pattern as create-employee).
+ */
+export async function resetEmployeePasswordRemote(
+  empId: string,
+  newPassword: string,
+): Promise<void> {
+  if (!isSupabaseConfigured) throw new Error('ต้องต่อ Supabase');
+  const supabase = getSupabase();
+  if (!supabase) throw new Error('Supabase client ไม่พร้อมใช้งาน');
+  const { data, error } = await supabase.functions.invoke<{ ok: boolean }>(
+    'reset-employee-password',
+    { body: { employee_id: empId, new_password: newPassword } },
+  );
+  if (error) {
+    const msg = (error as any)?.context?.body?.error ?? error.message;
+    throw new Error(msg || 'เรียก Edge Function ไม่สำเร็จ');
+  }
+  if (!data?.ok) throw new Error('Edge Function ตอบกลับไม่ถูกต้อง');
 }

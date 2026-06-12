@@ -6,9 +6,10 @@ import { Avatar } from '@/components/shared/Avatar';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { Modal, ConfirmModal } from '@/components/shared/Modal';
 import { EmptyState } from '@/components/shared/EmptyState';
-import { getEmployees, createEmployee, updateEmployee, setEmployeeStatus, resetEmployeePassword } from '@/lib/repos/employees';
+import { getEmployees, createEmployee, createEmployeeWithLogin, updateEmployee, setEmployeeStatus, resetEmployeePassword, resetEmployeePasswordRemote } from '@/lib/repos/employees';
 import { getShifts, getPayRules } from '@/lib/repos/settings';
 import { loadStore } from '@/lib/store';
+import { isSupabaseConfigured } from '@/lib/supabase/client';
 import { thaiDateShort } from '@/lib/utils';
 import { Plus, Edit, Power, KeyRound, Search, Users } from 'lucide-react';
 import type { Employee, EmploymentType } from '@/types';
@@ -167,6 +168,10 @@ function EmployeeFormModal({ open, onClose, editing, onSaved, companyId, actorId
 
   const handleSave = async () => {
     if (!form.full_name.trim()) { toast.error('กรุณากรอกชื่อ-นามสกุล'); return; }
+    if (!editing && form.createLogin && isSupabaseConfigured) {
+      if (!form.email.trim()) { toast.error('กรุณากรอกอีเมลสำหรับสร้างบัญชีเข้าใช้งาน'); return; }
+      if (form.password.length < 6) { toast.error('รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร'); return; }
+    }
     setSaving(true);
     try {
       if (editing) {
@@ -182,7 +187,28 @@ function EmployeeFormModal({ open, onClose, editing, onSaved, companyId, actorId
           start_date: form.start_date,
         });
         onSaved();
+      } else if (form.createLogin && isSupabaseConfigured) {
+        // Real Supabase Auth login — calls Edge Function with service_role
+        const result = await createEmployeeWithLogin({
+          full_name: form.full_name,
+          email: form.email,
+          password: form.password,
+          nickname: form.nickname || undefined,
+          phone: form.phone || undefined,
+          position: form.position || undefined,
+          employment_type: form.employment_type,
+          pay_rule_id: form.pay_rule_id || undefined,
+          default_shift_id: form.default_shift_id || undefined,
+          start_date: form.start_date,
+          role: 'employee',
+        });
+        toast.success(
+          `สร้างพนักงาน "${result.employee.full_name}" สำเร็จ`,
+          `Login: ${result.login.email} / ${result.login.password}`,
+        );
+        onSaved();
       } else {
+        // Demo mode (localStorage)
         createEmployee({
           company_id: companyId,
           full_name: form.full_name,
@@ -290,8 +316,28 @@ function EmployeeFormModal({ open, onClose, editing, onSaved, companyId, actorId
 }
 
 function ResetPasswordModal({ employee, onClose, onDone }: { employee: Employee | null; onClose: () => void; onDone: () => void }) {
+  const toast = useToast();
   const [pwd, setPwd] = useState('demo1234');
+  const [saving, setSaving] = useState(false);
   if (!employee) return null;
+
+  const handleReset = async () => {
+    if (pwd.length < 6) { toast.error('รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร'); return; }
+    setSaving(true);
+    try {
+      if (isSupabaseConfigured) {
+        await resetEmployeePasswordRemote(employee.id, pwd);
+      } else {
+        resetEmployeePassword(employee.id, pwd);
+      }
+      onDone();
+    } catch (e: any) {
+      toast.error('รีเซ็ตรหัสผ่านไม่สำเร็จ', e?.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <Modal
       open={!!employee}
@@ -299,13 +345,16 @@ function ResetPasswordModal({ employee, onClose, onDone }: { employee: Employee 
       title={`รีเซ็ตรหัสผ่าน: ${employee.full_name}`}
       footer={
         <>
-          <button className="btn-secondary" onClick={onClose}>ยกเลิก</button>
-          <button className="btn-primary" onClick={() => { try { resetEmployeePassword(employee.id, pwd); onDone(); } catch (e: any) { alert(e?.message); } }}>บันทึก</button>
+          <button className="btn-secondary" onClick={onClose} disabled={saving}>ยกเลิก</button>
+          <button className="btn-primary" onClick={handleReset} disabled={saving}>{saving ? 'กำลังบันทึก...' : 'บันทึก'}</button>
         </>
       }
     >
       <label className="label-base">รหัสผ่านใหม่</label>
       <input className="input-base" value={pwd} onChange={(e) => setPwd(e.target.value)} />
+      {isSupabaseConfigured && (
+        <p className="text-xs text-ink-muted mt-2">จะอัปเดตรหัสผ่านใน Supabase Auth ผ่าน Edge Function</p>
+      )}
     </Modal>
   );
 }
