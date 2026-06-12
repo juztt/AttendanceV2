@@ -31,6 +31,32 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+/**
+ * Convert a string seed id like "sh-morning" to a valid UUID v5
+ * so it can be stored in a Supabase `id uuid` column. The
+ * conversion is deterministic — the same string always produces
+ * the same UUID — so re-running the seed is idempotent.
+ *
+ * UUID v5 uses a namespace + name. We pick a fixed namespace
+ * (the function's URL) so the ids are stable across deployments.
+ */
+async function seedIdToUuid(seedId: string): Promise<string> {
+  // Use a fixed namespace UUID for our seed ids (arbitrary v4 UUID
+  // — only needs to be a valid UUID, and it must be the SAME every
+  // time so the same seed id always maps to the same UUID).
+  const NAMESPACE = '9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d';
+  const data = new TextEncoder().encode(`${NAMESPACE}:${seedId}`);
+  const hash = await crypto.subtle.digest('SHA-1', data);
+  const bytes = new Uint8Array(hash);
+  // Set version (5) and variant bits per RFC 4122
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes.slice(0, 16))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
 const NOW = new Date().toISOString();
 
 // Mirror of src/lib/seeds/thailand.ts — keep in sync.
@@ -130,11 +156,17 @@ async function seedTable(
   supabaseUrl: string,
   serviceKey: string,
   table: string,
-  rows: any[],
+  rows: Array<{ id: string }>,
   companyId: string,
 ): Promise<{ ok: boolean; inserted: number; error?: string }> {
   if (rows.length === 0) return { ok: true, inserted: 0 };
   try {
+    // Convert seed ids (e.g. "sh-morning") → deterministic UUID v5
+    // so the `id uuid` column accepts them.
+    const converted = await Promise.all(
+      rows.map(async (r) => ({ ...r, id: await seedIdToUuid(r.id) })),
+    );
+
     const selRes = await fetch(
       `${supabaseUrl}/rest/v1/${table}?company_id=eq.${companyId}&select=id`,
       { headers: { Authorization: `Bearer ${serviceKey}`, apikey: serviceKey } },
@@ -144,7 +176,7 @@ async function seedTable(
     }
     const existing = (await selRes.json()) as Array<{ id: string }>;
     const existingIds = new Set(existing.map((r) => r.id));
-    const missing = rows
+    const missing = converted
       .filter((r) => !existingIds.has(r.id))
       .map((r) => ({ ...r, company_id: companyId, created_at: NOW, updated_at: NOW }));
     if (missing.length === 0) return { ok: true, inserted: 0 };
