@@ -89,14 +89,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // First-time owner/admin login → seed Thai defaults into the
         // company (shifts, pay rules, leave types, holidays, location).
-        // Idempotent: rows already present for the company are skipped,
-        // so this is a no-op on every subsequent login.
+        //
+        // We MUST go through the Edge Function (which uses the
+        // service_role key) because direct client-side inserts are
+        // blocked by the company's RLS policies — the authenticated
+        // user can read, but the public tables typically only allow
+        // service_role to write. The Edge Function also keeps the
+        // local store in sync so the UI renders the new rows even
+        // before the next syncAllFromSupabase pass.
         if (profile.role === 'owner' || profile.role === 'admin') {
-          const { seedCompanyDefaultsRemote } = await import('@/lib/seeds');
+          const { seedCompanyDefaultsLocal } = await import('@/lib/seeds');
+          seedCompanyDefaultsLocal(profile.company_id);
           try {
-            await seedCompanyDefaultsRemote(profile.company_id);
+            const { data, error } = await supabase.functions.invoke<{
+              ok: boolean;
+              summary?: Record<string, { ok: boolean; inserted: number; error?: string }>;
+            }>('seed-company-defaults', { body: {} });
+            if (error) {
+              console.warn('[seed-company-defaults] failed', error.message);
+            } else {
+              console.log('[seed-company-defaults]', data?.summary);
+            }
           } catch (e) {
-            console.warn('seedCompanyDefaultsRemote failed', e);
+            console.warn('[seed-company-defaults] crashed', e);
           }
         }
 

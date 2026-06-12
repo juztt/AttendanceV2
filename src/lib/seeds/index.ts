@@ -64,23 +64,38 @@ export function seedCompanyDefaultsLocal(companyId: string): void {
  * idempotent without needing a unique constraint on `id` for
  * every table.
  *
- * Errors are logged but do not throw — a partially failed seed
- * (e.g. one table missing an RLS policy) should not block the
- * rest. The local store is always updated so the UI reflects the
- * intended defaults.
+ * Each table runs in its own try/catch so a single RLS failure
+ * (e.g. anon-key can't insert holidays) does not block the rest.
+ * All errors are logged so the dev console shows exactly which
+ * table failed and why.
+ *
+ * The local store is ALWAYS updated first so the UI is populated
+ * even if the Supabase writes fail entirely.
  */
 export async function seedCompanyDefaultsRemote(companyId: string): Promise<void> {
-  if (!companyId) return;
+  if (!companyId) {
+    console.warn('[seed] companyId is empty, skipping');
+    return;
+  }
   const { getSupabase, isSupabaseConfigured } = await import('@/lib/supabase/client');
-  if (!isSupabaseConfigured) return;
+  if (!isSupabaseConfigured) {
+    console.warn('[seed] Supabase not configured, skipping remote seed');
+    return;
+  }
   const supabase = getSupabase();
-  if (!supabase) return;
+  if (!supabase) {
+    console.warn('[seed] Supabase client unavailable, skipping remote seed');
+    return;
+  }
+
+  console.log('[seed] seeding company', companyId);
 
   // Always refresh the local store so the UI is populated even if
   // the Supabase writes fail.
   seedCompanyDefaultsLocal(companyId);
 
   type SeedingRow = { id: string };
+  const summary: Array<{ table: string; ok: boolean; inserted: number; error?: string }> = [];
 
   async function insertMissing<T extends SeedingRow>(
     table: string,
@@ -94,20 +109,31 @@ export async function seedCompanyDefaultsRemote(companyId: string): Promise<void
         .select('id')
         .eq('company_id', companyId);
       if (selErr) {
-        console.warn(`seed ${table}: select failed`, selErr.message);
+        console.warn(`[seed] ${table}: select failed —`, selErr.message);
+        summary.push({ table, ok: false, inserted: 0, error: selErr.message });
         return;
       }
       const existingIds = new Set((existing ?? []).map((r) => r.id));
       const missing = templates
         .filter((t) => !existingIds.has(t.id))
         .map((t) => ({ ...(t as object), company_id: companyId }));
-      if (missing.length === 0) return;
+      if (missing.length === 0) {
+        console.log(`[seed] ${table}: all ${templates.length} templates already present`);
+        summary.push({ table, ok: true, inserted: 0 });
+        return;
+      }
       const { error: insErr } = await client.from(table).insert(missing);
       if (insErr) {
-        console.warn(`seed ${table}: insert failed`, insErr.message);
+        console.error(`[seed] ${table}: insert failed —`, insErr.message);
+        summary.push({ table, ok: false, inserted: 0, error: insErr.message });
+      } else {
+        console.log(`[seed] ${table}: inserted ${missing.length} rows`);
+        summary.push({ table, ok: true, inserted: missing.length });
       }
     } catch (e) {
-      console.warn(`seed ${table} crashed`, e);
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`[seed] ${table} crashed —`, msg);
+      summary.push({ table, ok: false, inserted: 0, error: msg });
     }
   }
 
@@ -118,4 +144,12 @@ export async function seedCompanyDefaultsRemote(companyId: string): Promise<void
     insertMissing<Location>('locations', LOCATION_TEMPLATES as any),
     insertMissing<Holiday>('holidays', HOLIDAY_TEMPLATES as any),
   ]);
+
+  const failed = summary.filter((s) => !s.ok);
+  if (failed.length > 0) {
+    console.warn(`[seed] ${failed.length} table(s) failed:`, failed);
+  } else {
+    const total = summary.reduce((n, s) => n + s.inserted, 0);
+    console.log(`[seed] done, ${total} new rows across ${summary.length} tables`);
+  }
 }
