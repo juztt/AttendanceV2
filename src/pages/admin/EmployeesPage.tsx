@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { PageHeader } from '@/components/shared/PageHeader';
@@ -6,7 +6,16 @@ import { Avatar } from '@/components/shared/Avatar';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { Modal, ConfirmModal } from '@/components/shared/Modal';
 import { EmptyState } from '@/components/shared/EmptyState';
-import { getEmployees, createEmployee, createEmployeeWithLogin, updateEmployee, setEmployeeStatus, resetEmployeePassword, resetEmployeePasswordRemote } from '@/lib/repos/employees';
+import {
+  getEmployees,
+  createEmployee,
+  createEmployeeWithLogin,
+  updateEmployee,
+  setEmployeeStatus,
+  resetEmployeePassword,
+  resetEmployeePasswordRemote,
+  syncEmployeesFromSupabase,
+} from '@/lib/repos/employees';
 import { getShifts, getPayRules } from '@/lib/repos/settings';
 import { loadStore } from '@/lib/store';
 import { isSupabaseConfigured } from '@/lib/supabase/client';
@@ -24,6 +33,23 @@ export default function AdminEmployeesPage() {
   const [openForm, setOpenForm] = useState(false);
   const [confirmStatus, setConfirmStatus] = useState<Employee | null>(null);
   const [resetPwdFor, setResetPwdFor] = useState<Employee | null>(null);
+
+  // When Supabase is configured, the local store is empty on a fresh
+  // browser session — sync from Supabase on mount so the list shows
+  // employees that were created previously (including via the Edge
+  // Function).
+  useEffect(() => {
+    if (!session) return;
+    if (!isSupabaseConfigured) return;
+    let cancelled = false;
+    (async () => {
+      await syncEmployeesFromSupabase(session.companyId);
+      if (!cancelled) setRefresh((n) => n + 1);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.companyId]);
 
   const employees = useMemo(() => {
     if (!session) return [];
@@ -112,7 +138,17 @@ export default function AdminEmployeesPage() {
         open={openForm}
         onClose={() => { setOpenForm(false); setEditing(null); }}
         editing={editing}
-        onSaved={() => { setOpenForm(false); setEditing(null); setRefresh((n) => n + 1); toast.success('บันทึกพนักงานเรียบร้อย'); }}
+        onSaved={async () => {
+          setOpenForm(false);
+          setEditing(null);
+          // Re-sync from Supabase so newly created employees
+          // (via Edge Function) appear in the list immediately.
+          if (session && isSupabaseConfigured) {
+            await syncEmployeesFromSupabase(session.companyId);
+          }
+          setRefresh((n) => n + 1);
+          toast.success('บันทึกพนักงานเรียบร้อย');
+        }}
         companyId={session?.companyId ?? ''}
         actorId={session?.userId ?? ''}
       />

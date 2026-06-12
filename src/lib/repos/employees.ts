@@ -8,6 +8,55 @@ export function getEmployees(companyId: string): Employee[] {
   return loadStore().employees.filter((e) => e.company_id === companyId);
 }
 
+/**
+ * Pull employees for a company from Supabase (when configured) and merge
+ * them into the local store so the existing localStorage-based render
+ * path can keep working without rewriting every page.
+ *
+ * Idempotent — re-running will upsert by id. This is what makes
+ * "create employee via Edge Function" visible in the UI: the next
+ * `getEmployees()` call returns the freshly inserted row.
+ */
+export async function syncEmployeesFromSupabase(companyId: string): Promise<void> {
+  if (!isSupabaseConfigured) return;
+  const supabase = getSupabase();
+  if (!supabase) return;
+
+  const { data, error } = await supabase
+    .from('employees')
+    .select('*')
+    .eq('company_id', companyId);
+  if (error) {
+    console.error('syncEmployeesFromSupabase failed', error);
+    return;
+  }
+  if (!data) return;
+
+  const store = loadStore();
+  // Drop any local rows for this company (they may have been stale
+  // placeholders), then re-insert fresh rows.
+  store.employees = store.employees.filter((e) => e.company_id !== companyId);
+  for (const row of data) {
+    store.employees.push(row as Employee);
+  }
+  // Also sync profiles for completeness
+  const profileIds = data.map((r: any) => r.profile_id).filter(Boolean);
+  if (profileIds.length > 0) {
+    const { data: profiles } = await supabase
+      .from('profiles')
+      .select('*')
+      .in('id', profileIds);
+    if (profiles) {
+      for (const p of profiles) {
+        const idx = store.profiles.findIndex((x) => x.id === (p as any).id);
+        if (idx >= 0) store.profiles[idx] = p as any;
+        else store.profiles.push(p as any);
+      }
+    }
+  }
+  saveStore(store);
+}
+
 export function getActiveEmployees(companyId: string): Employee[] {
   return getEmployees(companyId).filter((e) => e.status === 'active');
 }
