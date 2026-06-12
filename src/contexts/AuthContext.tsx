@@ -60,11 +60,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { data, error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
         if (!data.user) throw new Error('ไม่สามารถเข้าสู่ระบบได้');
-        // Profile will be loaded from Supabase
-        const store = loadStore();
-        const profile = store.profiles.find((p) => p.id === data.user.id);
-        if (!profile) throw new Error('ไม่พบโปรไฟล์ผู้ใช้ในระบบ');
-        const employee = store.employees.find((e) => e.profile_id === data.user.id);
+
+        // Load profile from Supabase (not from localStorage) — Cloudflare
+        // deployment runs on a fresh origin with no demo store, so the
+        // profile MUST come from the public.profiles table.
+        const { data: profileRow, error: profileErr } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', data.user.id)
+          .maybeSingle();
+
+        if (profileErr) throw new Error(`โหลดโปรไฟล์ไม่สำเร็จ: ${profileErr.message}`);
+        if (!profileRow) {
+          throw new Error(
+            'ไม่พบโปรไฟล์ผู้ใช้ในระบบ — ต้องรัน SQL insert profile ใน Supabase ก่อน (ดู README ขั้น 3.4)',
+          );
+        }
+
+        const profile: Profile = profileRow as Profile;
+
+        // Try to find linked employee record (optional — only employee role has one)
+        const { data: employeeRow } = await supabase
+          .from('employees')
+          .select('*')
+          .eq('profile_id', data.user.id)
+          .maybeSingle();
+        const employee: Employee | null = (employeeRow as Employee) ?? null;
+
         const newSession: Session = {
           userId: profile.id,
           companyId: profile.company_id,
@@ -74,7 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         saveSession(newSession);
         setSession(newSession);
         setProfile(profile);
-        setEmployee(employee ?? null);
+        setEmployee(employee);
         return newSession;
       }
     }
