@@ -25,6 +25,7 @@ const EMPLOYEE_TABS: TabItem[] = [
   { to: '/employee', label: 'หน้าแรก', icon: Home },
   { to: '/employee/history', label: 'ประวัติ', icon: ClockHistory },
   { to: '/employee/leave', label: 'ลางาน', icon: CalendarDays },
+  { to: '/employee/calendar', label: 'ปฏิทิน', icon: CalendarDays },
   { to: '/employee/payslip', label: 'สลิป', icon: FileText },
 ];
 
@@ -33,6 +34,7 @@ const ADMIN_TABS: TabItem[] = [
   { to: '/admin/employees', label: 'พนักงาน', icon: Users },
   { to: '/admin/attendance', label: 'เวลาเข้างาน', icon: ClipboardCheck },
   { to: '/admin/payroll', label: 'เงินเดือน', icon: Wallet },
+  { to: '/admin/calendar', label: 'ปฏิทิน', icon: CalendarDays },
   { to: '/admin/settings', label: 'ตั้งค่า', icon: Settings },
 ];
 

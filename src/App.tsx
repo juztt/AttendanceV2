@@ -18,6 +18,8 @@ import AdminApprovalsPage from '@/pages/admin/ApprovalsPage';
 import AdminPayrollPage from '@/pages/admin/PayrollPage';
 import AdminSettingsPage from '@/pages/admin/SettingsPage';
 import AdminReportsPage from '@/pages/admin/ReportsPage';
+import AdminCalendarPage from '@/pages/admin/CalendarPage';
+import EmployeeCalendarPage from '@/pages/employee/CalendarPage';
 
 function RootRedirect() {
   const { session, isLoading } = useAuth();
@@ -57,6 +59,10 @@ export default function App() {
               path="/employee/payslip"
               element={<RequireAuth requireRole="employee"><AppShell><EmployeePayslipPage /></AppShell></RequireAuth>}
             />
+            <Route
+              path="/employee/calendar"
+              element={<RequireAuth requireRole="employee"><AppShell><EmployeeCalendarPage /></AppShell></RequireAuth>}
+            />
 
             {/* Admin */}
             <Route
@@ -86,6 +92,10 @@ export default function App() {
             <Route
               path="/admin/reports"
               element={<RequireAuth requireRole="admin"><AppShell><AdminReportsPage /></AppShell></RequireAuth>}
+            />
+            <Route
+              path="/admin/calendar"
+              element={<RequireAuth requireRole="admin"><AppShell><AdminCalendarPage /></AppShell></RequireAuth>}
             />
 
             <Route path="*" element={<Navigate to="/" replace />} />

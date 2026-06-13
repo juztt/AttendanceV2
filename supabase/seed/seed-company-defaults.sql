@@ -11,6 +11,20 @@
 --   * 56 public holidays for 2025 / 2026 / 2027
 --     (source: https://calendar.kapook.com/2569/holiday)
 --
+-- Adding holidays for 2028+:
+--   The cabinet typically publishes the next year's holiday list in
+--   October-November. When that happens, copy
+--   supabase/seed/seed-holidays-NEW-YEAR.sql to
+--   supabase/seed/seed-holidays-2028.sql, paste the announced
+--   dates following the uuid_from_label() pattern, and run it in
+--   SQL Editor. Sources:
+--     * https://calendar.kapook.com/2571/holiday
+--     * https://github.com/ppraserts/thailand-open-data
+--     * https://www.bot.or.th/th/financial-institutions-holiday.html
+--     * Royal Gazette (ราชกิจจานุเบกษา) cabinet resolution
+--   You can also add the new year's rows directly to this file
+--   so a fresh company gets them on the initial seed.
+--
 -- This version uses a hard-coded company_id so it works without an
 -- authenticated session. The default value matches the company_id
 -- used in the README 3.4 SQL ('บริษัทของฉัน'). If your company has
@@ -103,7 +117,21 @@ begin
 
   ----------------------------------------------------------------------------
   -- Holidays (2025 / 2026 / 2027) — kapook.com mirror
+  --
+  -- The holidays table has a UNIQUE (company_id, holiday_date)
+  -- constraint, so we can't just ON CONFLICT (id) DO NOTHING:
+  -- different label-derived ids can still hit the same date and
+  -- raise 23505. Use ON CONFLICT (company_id, holiday_date)
+  -- DO UPDATE to upsert the row in place — we always want the
+  -- canonical entry for that date.
   ----------------------------------------------------------------------------
+  -- Wipe any pre-existing holidays for this company so re-runs
+  -- against the OLD hand-rolled UUIDs don't leave stale rows.
+  -- (Other tables use ON CONFLICT (id) so they're fine; this one
+  -- needs a full replace because the company_id+date key would
+  -- otherwise be hit by the new ids.)
+  delete from public.holidays where company_id = v_company_id;
+
   insert into public.holidays (id, company_id, name, holiday_date,
                                multiplier, is_recurring, created_at, updated_at)
   values
@@ -170,7 +198,7 @@ begin
     (uuid_from_label('hl-2027-12-06'),  v_company_id, 'วันหยุดชดเชยวันพ่อแห่งชาติ (คาดการณ์)', '2027-12-06', 2, false, v_now, v_now),
     (uuid_from_label('hl-2027-12-10'),  v_company_id, 'วันรัฐธรรมนูญ', '2027-12-10', 2, false, v_now, v_now),
     (uuid_from_label('hl-2027-12-31'),  v_company_id, 'วันสิ้นปี', '2027-12-31', 2, false, v_now, v_now)
-  on conflict (id) do nothing;
+  on conflict (company_id, holiday_date) do nothing;
 
   raise notice '✅ Seed complete: 4 shifts, 3 pay rules, 4 leave types, 1 location, 56 holidays';
 end $$;
